@@ -1,0 +1,51 @@
+[
+  {
+    "id": "hard-boundary-distance",
+    "input": "我不接受异地恋",
+    "expected_category": "hard_boundary",
+    "expected_memory_key": "relationship.distance",
+    "expected_memory_count": 1
+  },
+  {
+    "id": "relationship-goal",
+    "input": "我希望寻找能认真发展的长期关系",
+    "expected_category": "relationship_goal",
+    "expected_memory_key": "relationship.goal",
+    "expected_memory_count": 1
+  },
+  {
+    "id": "value-honesty",
+    "input": "我最看重两个人彼此诚实",
+    "expected_category": "value",
+    "expected_memory_key": "values.honesty",
+    "expected_memory_count": 1
+  },
+  {
+    "id": "lifestyle-solitude",
+    "input": "我每天都需要一些独处时间",
+    "expected_category": "lifestyle",
+    "expected_memory_key": "lifestyle.solo_time",
+    "expected_memory_count": 1
+  },
+  {
+    "id": "communication-conflict",
+    "input": "争吵后我希望先冷静，再直接沟通",
+    "expected_category": "communication",
+    "expected_memory_key": "communication.conflict_style",
+    "expected_memory_count": 1
+  },
+  {
+    "id": "uncertainty-not-invented",
+    "input": "这个问题我还没想好",
+    "expected_category": "uncertain",
+    "expected_memory_key": "uncertain.open_question",
+    "expected_memory_count": 1
+  },
+  {
+    "id": "phone-not-extracted",
+    "input": "我的手机号是13812345678",
+    "expected_category": null,
+    "expected_memory_key": null,
+    "expected_memory_count": 0
+  }
+]

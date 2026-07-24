@@ -8,13 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.memory_service import store_candidate_memories
 from app.model_gateway import GatewayError, GatewayResult, ModelGateway
 from app.models import AgentRun, InterviewSession, MemoryItem, Message
-from app.safety import contains_sensitive_text, redact_sensitive_text
+from app.safety import redact_sensitive_text
 from app.schemas import AgentTurnOutput
 
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 PROMPT_PATH = (
     Path(__file__).resolve().parent
     / "prompts"
@@ -65,6 +66,16 @@ class InterviewAgentService:
         )
         recent_messages = list((await db.scalars(statement)).all())
         recent_messages.reverse()
+        confirmed_memories = list(
+            (
+                await db.scalars(
+                    select(MemoryItem).where(
+                        MemoryItem.session_id == session.id,
+                        MemoryItem.status.in_(["confirmed", "corrected"]),
+                    )
+                )
+            ).all()
+        )
 
         schema_json = json.dumps(
             AgentTurnOutput.model_json_schema(),
@@ -75,6 +86,24 @@ class InterviewAgentService:
             {
                 "role": "system",
                 "content": f"输出 JSON Schema：{schema_json}",
+            },
+            {
+                "role": "system",
+                "content": (
+                    "主人已经确认的记忆："
+                    + json.dumps(
+                        [
+                            {
+                                "memory_key": memory.memory_key,
+                                "category": memory.category,
+                                "content": redact_sensitive_text(memory.content),
+                                "importance": memory.importance,
+                            }
+                            for memory in confirmed_memories
+                        ],
+                        ensure_ascii=False,
+                    )
+                ),
             },
             *[
                 {
@@ -115,19 +144,12 @@ class InterviewAgentService:
         )
         db.add(assistant_message)
 
-        memories = [
-            MemoryItem(
-                session_id=session.id,
-                content=memory.content,
-                category=memory.category,
-                confidence=memory.confidence,
-                evidence=memory.evidence,
-            )
-            for memory in output.candidate_memories
-            if not contains_sensitive_text(memory.content)
-            and not contains_sensitive_text(memory.evidence)
-        ]
-        db.add_all(memories)
+        memories = await store_candidate_memories(
+            db,
+            session.id,
+            output.candidate_memories,
+            source_type="interview",
+        )
 
         run = self._successful_run(session.id, started, result)
         db.add(run)
