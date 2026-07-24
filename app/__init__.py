@@ -1,0 +1,1 @@
+"""AI Pets agent foundation."""

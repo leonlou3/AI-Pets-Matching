@@ -22,6 +22,8 @@ isProject: false
 
 # AI 宠物红娘创业验证计划
 
+> Agent P0 后端底座已经提供可运行的模型网关、结构化记忆、调用审计和演示 API。开发与体验说明见 [docs/P0_AGENT_FOUNDATION.md](docs/P0_AGENT_FOUNDATION.md)。
+
 ## 1. 产品定位
 - 面向中国大陆、以长期恋爱关系为目标的年轻职场人。
 - 核心承诺：用户不再刷大量资料；AI 宠物替主人考察候选人，只有双方宠物都认为值得认识才自动引荐。
