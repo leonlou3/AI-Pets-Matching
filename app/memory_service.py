@@ -71,7 +71,7 @@ async def apply_memory_review(
     db: AsyncSession,
     memory: MemoryItem,
     review: ReviewMemoryRequest,
-) -> None:
+) -> MemoryItem:
     status_by_action = {
         "confirm": "confirmed",
         "correct": "corrected",
@@ -79,14 +79,30 @@ async def apply_memory_review(
         "delete": "deleted",
     }
     if review.action == "correct":
-        memory.content = review.corrected_content or memory.content
+        corrected = MemoryItem(
+            session_id=memory.session_id,
+            content=review.corrected_content or memory.content,
+            memory_key=memory.memory_key,
+            category=memory.category,
+            confidence=1,
+            importance=memory.importance,
+            evidence=review.corrected_content or memory.content,
+            source_type="user_correction",
+            conflicts_with_id=memory.id,
+            status="corrected",
+        )
+        memory.status = "superseded"
+        db.add(corrected)
+        await db.flush()
+        return corrected
 
-    if review.action in {"confirm", "correct"} and memory.conflicts_with_id:
+    if review.action == "confirm" and memory.conflicts_with_id:
         conflicting = await db.get(MemoryItem, memory.conflicts_with_id)
         if conflicting and conflicting.status in ACTIVE_MEMORY_STATUSES:
             conflicting.status = "superseded"
 
     memory.status = status_by_action[review.action]
+    return memory
 
 
 def calculate_hatching_readiness(memories: list[MemoryItem]) -> HatchingReadiness:

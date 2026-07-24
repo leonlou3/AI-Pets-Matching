@@ -112,6 +112,20 @@ async def test_interview_hatching_and_reverse_verification_flow(tmp_path) -> Non
             )
             assert verification_payload["metrics"]["prompt_version"] == "v1"
 
+            rehatched = await client.post(
+                f"/v1/interviews/{session_id}/pet",
+                headers={"X-Owner-ID": "owner-1"},
+            )
+            assert rehatched.status_code == 201
+            assert rehatched.json()["pet"]["version"] == 2
+
+            stale_verification = await client.post(
+                f"/v1/pets/{pet['id']}/verification",
+                headers={"X-Owner-ID": "owner-1"},
+                json={"rating": "accurate"},
+            )
+            assert stale_verification.status_code == 409
+
 
 @pytest.mark.asyncio
 async def test_confirming_conflicting_memory_supersedes_old_value(tmp_path) -> None:
@@ -164,3 +178,55 @@ async def test_confirming_conflicting_memory_supersedes_old_value(tmp_path) -> N
             }
             assert status_by_id[old_memory["id"]] == "superseded"
             assert status_by_id[new_memory["id"]] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_direct_correction_preserves_original_memory_for_audit(tmp_path) -> None:
+    settings = Settings(
+        app_env="test",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'correction.db'}",
+        model_provider="mock",
+    )
+    app = create_app(settings=settings, gateway=MockModelGateway())
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            created = await client.post(
+                "/v1/interviews",
+                json={"owner_id": "owner-1"},
+            )
+            session_id = created.json()["id"]
+            original = await add_and_confirm_memory(
+                client,
+                session_id,
+                "我每天都需要一些独处时间",
+            )
+
+            correction = await client.patch(
+                f"/v1/memories/{original['id']}",
+                headers={"X-Owner-ID": "owner-1"},
+                json={
+                    "action": "correct",
+                    "corrected_content": "我每周只需要一个晚上独处",
+                },
+            )
+            assert correction.status_code == 200
+            corrected = correction.json()
+            assert corrected["id"] != original["id"]
+            assert corrected["status"] == "corrected"
+            assert corrected["source_type"] == "user_correction"
+            assert corrected["conflicts_with_id"] == original["id"]
+
+            detail = await client.get(
+                f"/v1/interviews/{session_id}",
+                headers={"X-Owner-ID": "owner-1"},
+            )
+            status_by_id = {
+                memory["id"]: memory["status"]
+                for memory in detail.json()["memories"]
+            }
+            assert status_by_id[original["id"]] == "superseded"

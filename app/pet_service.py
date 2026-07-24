@@ -167,8 +167,9 @@ class PetAgentService:
             correction=request.correction,
         )
         db.add(feedback)
-        if request.rating != "accurate":
-            pet.status = "needs_revision"
+        pet.status = (
+            "active" if request.rating == "accurate" else "needs_revision"
+        )
 
         if not request.correction:
             await db.commit()

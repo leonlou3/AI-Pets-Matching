@@ -169,10 +169,10 @@ async def review_memory(
     if memory.status == "deleted":
         raise HTTPException(status_code=409, detail="Memory has been deleted")
 
-    await apply_memory_review(db, memory, request)
+    reviewed_memory = await apply_memory_review(db, memory, request)
     await db.commit()
-    await db.refresh(memory)
-    return memory
+    await db.refresh(reviewed_memory)
+    return reviewed_memory
 
 
 @router.get(
@@ -286,6 +286,11 @@ async def verify_pet(
     )
     if pet is None:
         raise HTTPException(status_code=404, detail="Pet profile not found")
+    if pet.status == "superseded":
+        raise HTTPException(
+            status_code=409,
+            detail="Superseded pet profiles cannot be verified",
+        )
 
     try:
         result = await pet_service.verify(db, pet, request)
