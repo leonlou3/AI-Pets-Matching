@@ -48,9 +48,25 @@ class MockModelGateway:
         )
 
         if "初生宠物生成 Agent" in instructions:
+            import zlib
+
+            digest = zlib.crc32(user_message.encode("utf-8"))
+            names = ["小栖", "阿柚", "团团", "毛豆", "布丁", "乌龙", "汤圆", "芝麻"]
+            species_pool = [
+                "cat",
+                "dog",
+                "fox",
+                "rabbit",
+                "otter",
+                "deer",
+                "owl",
+                "capybara",
+                "red_panda",
+                "penguin",
+            ]
             payload = {
-                "name": "小栖",
-                "species": "cat",
+                "name": names[digest % len(names)],
+                "species": species_pool[digest % len(species_pool)],
                 "title": "温柔而有边界的观察家",
                 "core_traits": ["真诚", "独立", "重视沟通"],
                 "relationship_style": "慢慢建立信任，一旦确认就认真投入。",
@@ -60,6 +76,22 @@ class MockModelGateway:
                 "learning_topics": ["冲突后的修复偏好", "理想的共同生活节奏"],
                 "declaration": "我会替你认真了解，但把最终选择留给你。",
             }
+        elif "宠物对谈 Agent" in instructions:
+            try:
+                dialogue_input = json.loads(user_message)
+            except ValueError:
+                dialogue_input = {}
+            own_memories = dialogue_input.get("own_memories", [])
+            transcript = dialogue_input.get("transcript", [])
+            topic = own_memories[len(transcript) % max(len(own_memories), 1)][
+                "content"
+            ] if own_memories else "认真的长期关系"
+            payload = {
+                "utterance": f"我的主人很在意：{topic}。你的主人在这方面是什么样的？",
+                "wants_to_end": False,
+            }
+        elif "独立裁判 Agent" in instructions:
+            payload = self._judge_payload(json, user_message)
         elif "宠物画像纠正提取 Agent" in instructions:
             payload = {
                 "candidate_memories": [
@@ -97,6 +129,10 @@ class MockModelGateway:
                 category = "hard_boundary"
                 memory_key = "relationship.distance"
                 memory = "不接受异地恋"
+            elif "孩子" in user_message:
+                category = "relationship_goal"
+                memory_key = "family.children"
+                memory = user_message
             elif "异地" in user_message:
                 category = "preference"
                 memory_key = "relationship.distance"
@@ -154,6 +190,64 @@ class MockModelGateway:
                 output_tokens=max(len(content) // 2, 1),
             ),
         )
+
+    @staticmethod
+    def _judge_payload(json_module, user_message: str) -> dict:
+        try:
+            judge_input = json_module.loads(user_message)
+        except ValueError:
+            judge_input = {}
+        owner = judge_input.get("owner_memories", [])
+        candidate = judge_input.get("candidate_memories", [])
+        shared_keys = judge_input.get("shared_memory_keys", [])
+
+        owner_text = " ".join(item.get("content", "") for item in owner)
+        candidate_text = " ".join(item.get("content", "") for item in candidate)
+
+        def wants_children(text: str) -> bool:
+            return "想要孩子" in text and "不想要孩子" not in text
+
+        def rejects_children(text: str) -> bool:
+            return "不想要孩子" in text
+
+        if len(owner) < 2 or len(candidate) < 2:
+            return {
+                "decision": "insufficient_evidence",
+                "confidence": 0.4,
+                "hard_conflicts": [],
+                "fit_evidence": [],
+                "risks": [],
+                "uncertainties": ["双方已确认记忆过少，无法负责任地判断"],
+                "icebreaker_suggestion": "",
+            }
+
+        children_conflict = (
+            wants_children(owner_text) and rejects_children(candidate_text)
+        ) or (rejects_children(owner_text) and wants_children(candidate_text))
+        if children_conflict:
+            return {
+                "decision": "fail",
+                "confidence": 0.9,
+                "hard_conflicts": ["双方在是否要孩子上存在明确对立"],
+                "fit_evidence": [],
+                "risks": ["长期目标不一致"],
+                "uncertainties": [],
+                "icebreaker_suggestion": "",
+            }
+
+        confidence = min(0.95, 0.55 + 0.15 * len(shared_keys))
+        return {
+            "decision": "pass",
+            "confidence": confidence,
+            "hard_conflicts": [],
+            "fit_evidence": [
+                f"双方在 {key} 上都有明确表达" for key in shared_keys[:4]
+            ]
+            or ["对谈中双方回应节奏一致"],
+            "risks": ["仍需在真实沟通中验证相处节奏"],
+            "uncertainties": ["共同生活习惯还需要更多信息"],
+            "icebreaker_suggestion": "你们都认真聊过对长期关系的期待，可以从这里开始。",
+        }
 
     async def close(self) -> None:
         return None

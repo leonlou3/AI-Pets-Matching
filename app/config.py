@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     model_input_price_per_million: float = 0
     model_output_price_per_million: float = 0
 
+    # Matching funnel parameters. These are experiment knobs, not final values.
+    matching_min_shared_memory_keys: int = 2
+    matching_min_compatibility_score: float = 0.2
+    matching_dialogue_rounds: int = 2
+    matching_judge_min_confidence: float = 0.6
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
