@@ -6,24 +6,40 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_service import AgentProcessingError, InterviewAgentService
+from app.matching_service import MatchingService
 from app.memory_service import (
     apply_memory_review,
     calculate_hatching_readiness,
 )
-from app.models import AgentRun, InterviewSession, MemoryItem, PetProfile
+from app.models import (
+    AgentRun,
+    InterviewSession,
+    MatchPair,
+    MatchRun,
+    MemoryItem,
+    PetProfile,
+    Recommendation,
+    User,
+)
 from app.pet_service import PetAgentService
 from app.schemas import (
     AgentMetrics,
     CreateInterviewRequest,
+    CreateUserRequest,
     HatchPetResponse,
     HatchingReadiness,
     InterviewCreated,
     InterviewDetail,
+    MatchPairView,
+    MatchRunDetail,
+    MatchRunSummary,
     MemoryView,
     PetProfileView,
+    RecommendationView,
     ReviewMemoryRequest,
     SendMessageRequest,
     TurnResponse,
+    UserView,
     VerificationRequest,
     VerificationResponse,
 )
@@ -43,6 +59,10 @@ def get_agent_service(request: Request) -> InterviewAgentService:
 
 def get_pet_service(request: Request) -> PetAgentService:
     return request.app.state.pet_service
+
+
+def get_matching_service(request: Request) -> MatchingService:
+    return request.app.state.matching_service
 
 
 async def owner_header(
@@ -319,4 +339,104 @@ def _agent_metrics(run: AgentRun) -> AgentMetrics:
         output_tokens=run.output_tokens,
         latency_ms=run.latency_ms,
         estimated_cost=run.estimated_cost,
+    )
+
+
+@router.post(
+    "/v1/users",
+    response_model=UserView,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_user(
+    request: CreateUserRequest,
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    user = User(**request.model_dump())
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.get("/v1/users", response_model=list[UserView])
+async def list_users(db: AsyncSession = Depends(get_db)) -> list[User]:
+    return list((await db.scalars(select(User).order_by(User.created_at))).all())
+
+
+@router.post(
+    "/v1/matching/rounds",
+    response_model=MatchRunSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+async def run_matching_round(
+    db: AsyncSession = Depends(get_db),
+    matching_service: MatchingService = Depends(get_matching_service),
+) -> MatchRun:
+    try:
+        return await matching_service.run_round(db)
+    except AgentProcessingError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+
+
+@router.get("/v1/matching/rounds/{run_id}", response_model=MatchRunDetail)
+async def get_matching_round(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> MatchRunDetail:
+    run = await db.scalar(
+        select(MatchRun)
+        .where(MatchRun.id == run_id)
+        .options(selectinload(MatchRun.pairs).selectinload(MatchPair.verdicts))
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Match run not found")
+
+    pair_ids = [pair.id for pair in run.pairs]
+    recommendations = list(
+        (
+            await db.scalars(
+                select(Recommendation).where(Recommendation.pair_id.in_(pair_ids))
+            )
+        ).all()
+    ) if pair_ids else []
+
+    return MatchRunDetail(
+        id=run.id,
+        status=run.status,
+        eligible_users=run.eligible_users,
+        pairs_considered=run.pairs_considered,
+        pairs_passed_hard_filter=run.pairs_passed_hard_filter,
+        pairs_passed_compatibility=run.pairs_passed_compatibility,
+        pairs_dialogued=run.pairs_dialogued,
+        recommendations_created=run.recommendations_created,
+        created_at=run.created_at,
+        pairs=[MatchPairView.model_validate(pair) for pair in run.pairs],
+        recommendations=[
+            RecommendationView.model_validate(item) for item in recommendations
+        ],
+    )
+
+
+@router.get(
+    "/v1/users/{user_id}/recommendations",
+    response_model=list[RecommendationView],
+)
+async def list_user_recommendations(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> list[Recommendation]:
+    return list(
+        (
+            await db.scalars(
+                select(Recommendation)
+                .where(
+                    (Recommendation.user_a_id == user_id)
+                    | (Recommendation.user_b_id == user_id)
+                )
+                .order_by(Recommendation.created_at.desc())
+            )
+        ).all()
     )

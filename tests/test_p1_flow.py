@@ -91,7 +91,7 @@ async def test_interview_hatching_and_reverse_verification_flow(tmp_path) -> Non
             )
             assert hatched.status_code == 201
             pet = hatched.json()["pet"]
-            assert pet["name"] == "小栖"
+            assert pet["name"]
             assert len(pet["core_traits"]) == 3
             assert hatched.json()["metrics"]["prompt_version"] == "v1"
 

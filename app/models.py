@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -13,6 +13,23 @@ def new_id() -> str:
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    nickname: Mapped[str] = mapped_column(String(64))
+    gender: Mapped[str] = mapped_column(String(16))
+    orientation: Mapped[str] = mapped_column(String(32))
+    city: Mapped[str] = mapped_column(String(64), index=True)
+    birth_year: Mapped[int] = mapped_column(Integer)
+    seeking_genders: Mapped[list[str]] = mapped_column(JSON)
+    seeking_min_age: Mapped[int] = mapped_column(Integer)
+    seeking_max_age: Mapped[int] = mapped_column(Integer)
+    accept_remote: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
 class InterviewSession(Base):
@@ -146,3 +163,99 @@ class VerificationFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
 
     pet_profile: Mapped[PetProfile] = relationship(back_populates="feedback")
+
+
+class MatchRun(Base):
+    __tablename__ = "match_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    status: Mapped[str] = mapped_column(String(32), default="completed")
+    eligible_users: Mapped[int] = mapped_column(Integer, default=0)
+    pairs_considered: Mapped[int] = mapped_column(Integer, default=0)
+    pairs_passed_hard_filter: Mapped[int] = mapped_column(Integer, default=0)
+    pairs_passed_compatibility: Mapped[int] = mapped_column(Integer, default=0)
+    pairs_dialogued: Mapped[int] = mapped_column(Integer, default=0)
+    recommendations_created: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    pairs: Mapped[list["MatchPair"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+    )
+
+
+class MatchPair(Base):
+    __tablename__ = "match_pairs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("match_runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_a_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_b_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    # Furthest funnel stage reached: hard_filter / compatibility / dialogue /
+    # judgement / recommended
+    stage: Mapped[str] = mapped_column(String(32), index=True)
+    outcome: Mapped[str] = mapped_column(String(32), index=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    compatibility_score: Mapped[float] = mapped_column(Float, default=0)
+    shared_memory_keys: Mapped[list[str]] = mapped_column(JSON, default=list)
+    dialogue_transcript: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    run: Mapped[MatchRun] = relationship(back_populates="pairs")
+    verdicts: Mapped[list["JudgeVerdict"]] = relationship(
+        back_populates="pair",
+        cascade="all, delete-orphan",
+    )
+
+
+class JudgeVerdict(Base):
+    __tablename__ = "judge_verdicts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    pair_id: Mapped[str] = mapped_column(
+        ForeignKey("match_pairs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    # Direction "a_for_b" means: is user A a good match for user B.
+    direction: Mapped[str] = mapped_column(String(16))
+    decision: Mapped[str] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float)
+    hard_conflicts: Mapped[list[str]] = mapped_column(JSON, default=list)
+    fit_evidence: Mapped[list[str]] = mapped_column(JSON, default=list)
+    risks: Mapped[list[str]] = mapped_column(JSON, default=list)
+    uncertainties: Mapped[list[str]] = mapped_column(JSON, default=list)
+    icebreaker_suggestion: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+    pair: Mapped[MatchPair] = relationship(back_populates="verdicts")
+
+
+class Recommendation(Base):
+    __tablename__ = "recommendations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    pair_id: Mapped[str] = mapped_column(
+        ForeignKey("match_pairs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_a_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_b_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    reason: Mapped[str] = mapped_column(Text)
+    icebreaker_suggestion: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)

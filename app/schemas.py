@@ -199,3 +199,127 @@ class VerificationResponse(BaseModel):
     pet_status: str
     candidate_memories: list[MemoryView]
     metrics: AgentMetrics | None = None
+
+
+Gender = Literal["male", "female"]
+Orientation = Literal["heterosexual", "homosexual", "bisexual"]
+
+
+class CreateUserRequest(BaseModel):
+    nickname: str = Field(min_length=1, max_length=64)
+    gender: Gender
+    orientation: Orientation
+    city: str = Field(min_length=1, max_length=64)
+    birth_year: int = Field(ge=1950, le=2010)
+    seeking_genders: list[Gender] = Field(min_length=1, max_length=2)
+    seeking_min_age: int = Field(ge=18, le=99)
+    seeking_max_age: int = Field(ge=18, le=99)
+    accept_remote: bool = False
+
+    @model_validator(mode="after")
+    def validate_age_range(self) -> "CreateUserRequest":
+        if self.seeking_min_age > self.seeking_max_age:
+            raise ValueError("seeking_min_age cannot exceed seeking_max_age")
+        return self
+
+
+class UserView(BaseModel):
+    id: str
+    nickname: str
+    gender: str
+    orientation: str
+    city: str
+    birth_year: int
+    seeking_genders: list[str]
+    seeking_min_age: int
+    seeking_max_age: int
+    accept_remote: bool
+    status: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DialogueTurnOutput(BaseModel):
+    """Structured output of one pet utterance during a closed dialogue."""
+
+    utterance: str = Field(min_length=1, max_length=2000)
+    wants_to_end: bool = False
+
+
+class JudgeOutput(BaseModel):
+    """Fixed structure required from the independent judge agent."""
+
+    decision: Literal["pass", "fail", "insufficient_evidence"]
+    confidence: float = Field(ge=0, le=1)
+    hard_conflicts: list[str] = Field(default_factory=list, max_length=8)
+    fit_evidence: list[str] = Field(default_factory=list, max_length=8)
+    risks: list[str] = Field(default_factory=list, max_length=8)
+    uncertainties: list[str] = Field(default_factory=list, max_length=8)
+    icebreaker_suggestion: str = Field(default="", max_length=300)
+
+
+class JudgeVerdictView(BaseModel):
+    direction: str
+    decision: str
+    confidence: float
+    hard_conflicts: list[str]
+    fit_evidence: list[str]
+    risks: list[str]
+    uncertainties: list[str]
+    icebreaker_suggestion: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DialogueTurnView(BaseModel):
+    round_no: int
+    speaker: str
+    utterance: str
+
+
+class MatchPairView(BaseModel):
+    id: str
+    user_a_id: str
+    user_b_id: str
+    stage: str
+    outcome: str
+    failure_reason: str | None
+    compatibility_score: float
+    shared_memory_keys: list[str]
+    dialogue_transcript: list[DialogueTurnView]
+    verdicts: list[JudgeVerdictView]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RecommendationView(BaseModel):
+    id: str
+    pair_id: str
+    user_a_id: str
+    user_b_id: str
+    reason: str
+    icebreaker_suggestion: str
+    status: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MatchRunSummary(BaseModel):
+    id: str
+    status: str
+    eligible_users: int
+    pairs_considered: int
+    pairs_passed_hard_filter: int
+    pairs_passed_compatibility: int
+    pairs_dialogued: int
+    recommendations_created: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MatchRunDetail(MatchRunSummary):
+    pairs: list[MatchPairView]
+    recommendations: list[RecommendationView]
