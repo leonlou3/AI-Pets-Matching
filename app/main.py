@@ -8,6 +8,7 @@ from app.api import router
 from app.config import Settings, get_settings
 from app.database import Database
 from app.model_gateway import ModelGateway, build_gateway
+from app.pet_service import PetAgentService
 
 
 def create_app(
@@ -35,6 +36,10 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.database = database
     app.state.agent_service = InterviewAgentService(
+        resolved_gateway,
+        resolved_settings,
+    )
+    app.state.pet_service = PetAgentService(
         resolved_gateway,
         resolved_settings,
     )

@@ -6,16 +6,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agent_service import AgentProcessingError, InterviewAgentService
-from app.models import InterviewSession, MemoryItem
+from app.memory_service import (
+    apply_memory_review,
+    calculate_hatching_readiness,
+)
+from app.models import AgentRun, InterviewSession, MemoryItem, PetProfile
+from app.pet_service import PetAgentService
 from app.schemas import (
     AgentMetrics,
     CreateInterviewRequest,
+    HatchPetResponse,
+    HatchingReadiness,
     InterviewCreated,
     InterviewDetail,
     MemoryView,
+    PetProfileView,
     ReviewMemoryRequest,
     SendMessageRequest,
     TurnResponse,
+    VerificationRequest,
+    VerificationResponse,
 )
 
 
@@ -29,6 +39,10 @@ async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
 
 def get_agent_service(request: Request) -> InterviewAgentService:
     return request.app.state.agent_service
+
+
+def get_pet_service(request: Request) -> PetAgentService:
+    return request.app.state.pet_service
 
 
 async def owner_header(
@@ -91,6 +105,7 @@ async def send_message(
     return TurnResponse(
         reply=turn.output.reply,
         candidate_memories=[MemoryView.model_validate(item) for item in turn.memories],
+        progress=turn.output.progress,
         metrics=AgentMetrics(
             run_id=turn.run.id,
             model_name=turn.run.model_name,
@@ -154,15 +169,154 @@ async def review_memory(
     if memory.status == "deleted":
         raise HTTPException(status_code=409, detail="Memory has been deleted")
 
-    status_by_action = {
-        "confirm": "confirmed",
-        "correct": "corrected",
-        "reject": "rejected",
-        "delete": "deleted",
-    }
-    if request.action == "correct":
-        memory.content = request.corrected_content or memory.content
-    memory.status = status_by_action[request.action]
+    reviewed_memory = await apply_memory_review(db, memory, request)
     await db.commit()
-    await db.refresh(memory)
-    return memory
+    await db.refresh(reviewed_memory)
+    return reviewed_memory
+
+
+@router.get(
+    "/v1/interviews/{session_id}/hatching-readiness",
+    response_model=HatchingReadiness,
+)
+async def get_hatching_readiness(
+    session_id: str,
+    owner_id: str = Depends(owner_header),
+    db: AsyncSession = Depends(get_db),
+) -> HatchingReadiness:
+    session = await db.scalar(
+        select(InterviewSession)
+        .where(
+            InterviewSession.id == session_id,
+            InterviewSession.owner_id == owner_id,
+        )
+        .options(selectinload(InterviewSession.memories))
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+    return calculate_hatching_readiness(session.memories)
+
+
+@router.post(
+    "/v1/interviews/{session_id}/pet",
+    response_model=HatchPetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def hatch_pet(
+    session_id: str,
+    owner_id: str = Depends(owner_header),
+    db: AsyncSession = Depends(get_db),
+    pet_service: PetAgentService = Depends(get_pet_service),
+) -> HatchPetResponse:
+    session = await db.scalar(
+        select(InterviewSession)
+        .where(
+            InterviewSession.id == session_id,
+            InterviewSession.owner_id == owner_id,
+        )
+        .options(selectinload(InterviewSession.memories))
+    )
+    if session is None:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    readiness = calculate_hatching_readiness(session.memories)
+    if not readiness.ready:
+        raise HTTPException(
+            status_code=409,
+            detail=readiness.model_dump(),
+        )
+
+    try:
+        result = await pet_service.hatch(db, session, session.memories)
+    except AgentProcessingError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+
+    return HatchPetResponse(
+        pet=PetProfileView.model_validate(result.pet),
+        readiness=readiness,
+        metrics=_agent_metrics(result.run),
+    )
+
+
+@router.get(
+    "/v1/interviews/{session_id}/pet",
+    response_model=PetProfileView,
+)
+async def get_current_pet(
+    session_id: str,
+    owner_id: str = Depends(owner_header),
+    db: AsyncSession = Depends(get_db),
+) -> PetProfile:
+    pet = await db.scalar(
+        select(PetProfile)
+        .join(InterviewSession)
+        .where(
+            PetProfile.session_id == session_id,
+            PetProfile.status.in_(["active", "needs_revision"]),
+            InterviewSession.owner_id == owner_id,
+        )
+        .order_by(PetProfile.version.desc())
+    )
+    if pet is None:
+        raise HTTPException(status_code=404, detail="Active pet profile not found")
+    return pet
+
+
+@router.post(
+    "/v1/pets/{pet_id}/verification",
+    response_model=VerificationResponse,
+)
+async def verify_pet(
+    pet_id: str,
+    request: VerificationRequest,
+    owner_id: str = Depends(owner_header),
+    db: AsyncSession = Depends(get_db),
+    pet_service: PetAgentService = Depends(get_pet_service),
+) -> VerificationResponse:
+    pet = await db.scalar(
+        select(PetProfile)
+        .join(InterviewSession)
+        .where(
+            PetProfile.id == pet_id,
+            InterviewSession.owner_id == owner_id,
+        )
+    )
+    if pet is None:
+        raise HTTPException(status_code=404, detail="Pet profile not found")
+    if pet.status == "superseded":
+        raise HTTPException(
+            status_code=409,
+            detail="Superseded pet profiles cannot be verified",
+        )
+
+    try:
+        result = await pet_service.verify(db, pet, request)
+    except AgentProcessingError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+
+    return VerificationResponse(
+        feedback_id=result.feedback.id,
+        pet_status=result.pet.status,
+        candidate_memories=[
+            MemoryView.model_validate(item) for item in result.memories
+        ],
+        metrics=_agent_metrics(result.run) if result.run else None,
+    )
+
+
+def _agent_metrics(run: AgentRun) -> AgentMetrics:
+    return AgentMetrics(
+        run_id=run.id,
+        model_name=run.model_name,
+        prompt_version=run.prompt_version,
+        input_tokens=run.input_tokens,
+        output_tokens=run.output_tokens,
+        latency_ms=run.latency_ms,
+        estimated_cost=run.estimated_cost,
+    )

@@ -43,27 +43,109 @@ class MockModelGateway:
         import json
 
         user_message = messages[-1]["content"]
-        if "不接受异地" in user_message or "不能异地" in user_message:
-            category = "hard_boundary"
-            memory = "不接受异地恋"
-        else:
-            category = "uncertain"
-            memory = user_message
+        instructions = "\n".join(
+            message["content"] for message in messages if message["role"] == "system"
+        )
 
-        content = json.dumps(
-            {
+        if "初生宠物生成 Agent" in instructions:
+            payload = {
+                "name": "小栖",
+                "species": "cat",
+                "title": "温柔而有边界的观察家",
+                "core_traits": ["真诚", "独立", "重视沟通"],
+                "relationship_style": "慢慢建立信任，一旦确认就认真投入。",
+                "communication_style": "愿意直接表达，也重视彼此冷静整理的空间。",
+                "strengths": ["边界清晰", "关系目标认真", "能够倾听"],
+                "easily_misunderstood_as": "刚认识时的谨慎有时会被误解为冷淡。",
+                "learning_topics": ["冲突后的修复偏好", "理想的共同生活节奏"],
+                "declaration": "我会替你认真了解，但把最终选择留给你。",
+            }
+        elif "宠物画像纠正提取 Agent" in instructions:
+            payload = {
+                "candidate_memories": [
+                    {
+                        "content": user_message,
+                        "memory_key": "verification.profile_correction",
+                        "category": "uncertain",
+                        "confidence": 1,
+                        "importance": 4,
+                        "evidence": user_message,
+                    }
+                ]
+            }
+        else:
+            if "[敏感信息已隐藏]" in user_message:
+                payload = {
+                    "reply": "这类身份信息不需要记录，我们继续聊你的关系期待吧。",
+                    "candidate_memories": [],
+                    "progress": {
+                        "covered_categories": [],
+                        "missing_topics": ["关系目标", "价值观", "生活方式", "沟通方式"],
+                        "focus_topic": "关系目标",
+                    },
+                }
+                content = json.dumps(payload, ensure_ascii=False)
+                return GatewayResult(
+                    content=content,
+                    model_name="mock-model",
+                    usage=GatewayUsage(
+                        input_tokens=1,
+                        output_tokens=max(len(content) // 2, 1),
+                    ),
+                )
+            if "不接受异地" in user_message or "不能异地" in user_message:
+                category = "hard_boundary"
+                memory_key = "relationship.distance"
+                memory = "不接受异地恋"
+            elif "异地" in user_message:
+                category = "preference"
+                memory_key = "relationship.distance"
+                memory = user_message
+            elif "长期" in user_message or "结婚" in user_message:
+                category = "relationship_goal"
+                memory_key = "relationship.goal"
+                memory = user_message
+            elif "诚实" in user_message or "坦诚" in user_message:
+                category = "value"
+                memory_key = "values.honesty"
+                memory = user_message
+            elif "独处" in user_message or "作息" in user_message:
+                category = "lifestyle"
+                memory_key = "lifestyle.solo_time"
+                memory = user_message
+            elif "沟通" in user_message or "争吵" in user_message:
+                category = "communication"
+                memory_key = "communication.conflict_style"
+                memory = user_message
+            elif "没想好" in user_message or "不知道" in user_message:
+                category = "uncertain"
+                memory_key = "uncertain.open_question"
+                memory = user_message
+            else:
+                category = "preference"
+                memory_key = "preference.general"
+                memory = user_message
+
+            payload = {
                 "reply": "我记下了。能说说这项要求背后的原因或实际经历吗？",
                 "candidate_memories": [
                     {
                         "content": memory,
+                        "memory_key": memory_key,
                         "category": category,
                         "confidence": 0.9,
+                        "importance": 4,
                         "evidence": user_message,
                     }
                 ],
-            },
-            ensure_ascii=False,
-        )
+                "progress": {
+                    "covered_categories": [category],
+                    "missing_topics": ["价值观", "生活方式", "沟通方式"],
+                    "focus_topic": category,
+                },
+            }
+
+        content = json.dumps(payload, ensure_ascii=False)
         return GatewayResult(
             content=content,
             model_name="mock-model",

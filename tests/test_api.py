@@ -46,7 +46,7 @@ async def test_complete_candidate_memory_confirmation_flow(settings: Settings) -
             payload = turn.json()
             assert payload["candidate_memories"][0]["status"] == "candidate"
             assert payload["candidate_memories"][0]["category"] == "hard_boundary"
-            assert payload["metrics"]["prompt_version"] == "v1"
+            assert payload["metrics"]["prompt_version"] == "v2"
             assert payload["metrics"]["input_tokens"] > 0
 
             memory_id = payload["candidate_memories"][0]["id"]

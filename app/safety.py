@@ -16,4 +16,6 @@ def redact_sensitive_text(text: str) -> str:
 
 
 def contains_sensitive_text(text: str) -> bool:
-    return any(pattern.search(text) for pattern in _SENSITIVE_PATTERNS)
+    return "[敏感信息已隐藏]" in text or any(
+        pattern.search(text) for pattern in _SENSITIVE_PATTERNS
+    )
